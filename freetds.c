@@ -179,6 +179,90 @@ static VALUE connection_Initialize(VALUE self, VALUE connection_hash) {
 	return self;
 }
 
+static VALUE connection_Execute(VALUE self, VALUE query) {
+	int rows = 0;
+	int rc, i;
+	TDSCOLUMN *col;
+	int ctype;
+	CONV_RESULT dres;
+	unsigned char *src;
+	TDS_INT srclen;
+	TDS_INT rowtype;
+	TDS_INT resulttype;
+	TDS_INT computeid;
+	struct timeval start, stop;
+	int print_rows = 1;
+	char message[128];
+	char* buf;
+	
+	TDS_Connection* conn;
+	TDSSOCKET * tds;
+	
+	Data_Get_Struct(self, TDS_Connection, conn);
+	buf = value_to_cstr(query);
+	
+	tds = conn->tds;
+	rc = tds_submit_query(tds, buf);
+	if (rc != TDS_SUCCEED) {
+		fprintf(stderr, "tds_submit_query() failed\n");
+		return 1;
+	}
+
+	while ((rc = tds_process_result_tokens(tds, &resulttype, NULL)) == TDS_SUCCEED) {
+		switch (resulttype) {
+		case TDS_ROWFMT_RESULT:
+			if (tds->res_info) {
+				for (i = 0; i < tds->res_info->num_cols; i++) {
+					fprintf(stdout, "%s\t", tds->res_info->columns[i]->column_name);
+				}
+				fprintf(stdout, "\n");
+			}
+			break;
+		case TDS_ROW_RESULT:
+			rows = 0;
+			while ((rc = tds_process_row_tokens(tds, &rowtype, &computeid)) == TDS_SUCCEED) {
+				rows++;
+
+				if (!tds->res_info)
+					continue;
+
+				for (i = 0; i < tds->res_info->num_cols; i++) {
+					if (tds_get_null(tds->res_info->current_row, i)) {
+						if (print_rows)
+							fprintf(stdout, "NULL\t");
+						continue;
+					}
+					col = tds->res_info->columns[i];
+					ctype = tds_get_conversion_type(col->column_type, col->column_size);
+
+					src = &(tds->res_info->current_row[col->column_offset]);
+					if (is_blob_type(col->column_type))
+						src = (unsigned char *) ((TDSBLOB *) src)->textvalue;
+					srclen = col->column_cur_size;
+
+
+					if (tds_convert(tds->tds_ctx, ctype, (TDS_CHAR *) src, srclen, SYBVARCHAR, &dres) < 0)
+						continue;
+					if (print_rows)
+						fprintf(stdout, "%s\t", dres.c);
+					free(dres.c);
+				}
+				if (print_rows)
+					fprintf(stdout, "\n");
+
+			}
+			break;
+		case TDS_STATUS_RESULT:
+			printf("(return status = %d)\n", tds->ret_status);
+			break;
+		default:
+			break;
+		}
+	}
+	
+	return Qnil;	
+}
+
 static VALUE driver_Connect(VALUE self, VALUE connection_hash ) {
 	return rb_class_new_instance(1, &connection_hash, rb_Connection);
 }
@@ -195,5 +279,6 @@ void Init_freetds() {
 	rb_Connection = rb_define_class_under(rb_FreeTDS, "Connection", rb_cObject);
 	rb_define_alloc_func(rb_Connection, alloc_tds_connection);
 	rb_define_method(rb_Connection, "initialize", connection_Initialize, 1);
+	rb_define_method(rb_Connection, "execute", connection_Execute, 1);
 	
 }
