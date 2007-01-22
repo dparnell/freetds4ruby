@@ -24,11 +24,5 @@ statement = connection.statement('select * from Patient ')
 statement.execute
 
 puts statement.columns.inspect
-#puts statement.rows.inspect
+puts statement.rows.inspect
 puts statement.status
-
-statement.rows.each do |row|
-  if row["Picture"]
-    puts row["Picture"].length
-  end
-end
