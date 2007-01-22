@@ -30,12 +30,16 @@ class TestFreeTDS < Test::Unit::TestCase
     assert_equal(1, statement.rows.length, "only one row should have been returned")
     assert_nil(statement.status, "status should be nil")
 
-    bad_statement = connection.statement('this should fail')
-    begin
-      bad_statement.execute
-      flunk("The statement execution should have failed")
-    rescue IOError => e
+    row = statement.rows.first
+    statement.columns.each do |col|
+      assert_not_nil(col['name'])
+      assert(row.has_key?(col['name']), "Column #{col[name]} missing from selected row")
     end
+    
+    bad_statement = connection.statement('this should fail')
+    assert_raise(IOError, "The statement execution should have failed with an IOError") {
+      bad_statement.execute
+    }
   end
   
 end
