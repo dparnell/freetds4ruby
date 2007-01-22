@@ -42,4 +42,17 @@ class TestFreeTDS < Test::Unit::TestCase
     }
   end
   
+  def test_bad_connection
+    driver = FreeTDS::Driver.new
+    assert_not_nil(driver, "driver creation failed")
+    
+    # these don't hit the server
+    assert_raise(ArgumentError) { driver.connect({}) }
+    assert_raise(ArgumentError) { driver.connect({'hostname' => 'this host should not exist'}) }
+    assert_raise(ArgumentError) { driver.connect({'hostname' => 'this host should not exist', 'port' => 1234}) }
+    
+    assert_raise(IOError) { driver.connect({'hostname' => 'this host should not exist', 'port' => 1234, 'username' => 'xxxx'}) }
+    assert_raise(IOError) { driver.connect({'servername' => 'beast', 'username' => 'xxxx'}) }
+  end
+  
 end

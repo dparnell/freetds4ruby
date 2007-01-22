@@ -105,28 +105,29 @@ static VALUE alloc_tds_connection(VALUE klass) {
 static int connection_handle_message(TDSCONTEXT * context, TDSSOCKET * tds, TDSMESSAGE * msg)
 {
 	VALUE self = (VALUE)tds_get_parent(tds);
-	
-	if (msg->msg_number == 0) {
-		VALUE messages = rb_iv_get(self, "@messages");
-		rb_ary_push(messages, rb_str_new2(msg->message));
-		return 0;
-	}
 
-	if (msg->msg_number != 5701 && msg->msg_number != 5703 && msg->msg_number != 20018) {
-		TDS_Connection* conn;		
-		VALUE errors = rb_iv_get(self, "@errors");
-		VALUE err = rb_hash_new();
+	if(RTEST(self)) {
+		if (msg->msg_number == 0) {
+			VALUE messages = rb_iv_get(self, "@messages");
+			rb_ary_push(messages, rb_str_new2(msg->message));
+			return 0;
+		}
+
+		if (msg->msg_number != 5701 && msg->msg_number != 5703 && msg->msg_number != 20018) {
+			TDS_Connection* conn;		
+			VALUE errors = rb_iv_get(self, "@errors");
+			VALUE err = rb_hash_new();
 				
-		rb_hash_aset(err, rb_str_new2("error"), INT2FIX(msg->msg_number));
-		rb_hash_aset(err, rb_str_new2("level"), INT2FIX(msg->msg_level));
-		rb_hash_aset(err, rb_str_new2("state"), INT2FIX(msg->msg_state));
-		rb_hash_aset(err, rb_str_new2("server"), rb_str_new2(msg->server));
-		rb_hash_aset(err, rb_str_new2("line"), INT2FIX(msg->line_number));
-		rb_hash_aset(err, rb_str_new2("message"), rb_str_new2(msg->message));
+			rb_hash_aset(err, rb_str_new2("error"), INT2FIX(msg->msg_number));
+			rb_hash_aset(err, rb_str_new2("level"), INT2FIX(msg->msg_level));
+			rb_hash_aset(err, rb_str_new2("state"), INT2FIX(msg->msg_state));
+			rb_hash_aset(err, rb_str_new2("server"), rb_str_new2(msg->server));
+			rb_hash_aset(err, rb_str_new2("line"), INT2FIX(msg->line_number));
+			rb_hash_aset(err, rb_str_new2("message"), rb_str_new2(msg->message));
 		
-		rb_ary_push(errors, err);
+			rb_ary_push(errors, err);
+		}
 	}
-
 	return 0;
 }
 
@@ -141,6 +142,7 @@ static VALUE connection_Initialize(VALUE self, VALUE connection_hash) {
 	char *charset = NULL;
 	int port = 0;
 	VALUE temp;
+	VALUE errors;
 	
 	Data_Get_Struct(self, TDS_Connection, conn);
 
@@ -233,13 +235,26 @@ static VALUE connection_Initialize(VALUE self, VALUE connection_hash) {
 	if (charset)
 		free(charset);
 
+	rb_iv_set(self, "@messages", rb_ary_new());
+	errors = rb_ary_new();
+	rb_iv_set(self, "@errors", errors);
+
 	/* Try to open a connection */
 	conn->tds = tds_alloc_socket(conn->context, 512);
-	tds_set_parent(conn->tds, NULL);
+	tds_set_parent(conn->tds, (void*)self);
 	conn->connection = tds_read_config_info(NULL, conn->login, conn->context->locale);
 	if (!conn->connection || tds_connect(conn->tds, conn->connection) == TDS_FAIL) {
 		tds_free_connection(conn->connection);
-		rb_raise(rb_eException, "Connection failed");
+		
+		VALUE err = rb_funcall(errors, rb_intern("first"), 0);
+		if(RTEST(err)) {
+			char* error_message = value_to_cstr(rb_hash_aref(err, rb_str_new2("message")));
+			rb_raise(rb_eIOError, error_message);
+			
+			return Qnil;
+		}
+		
+		rb_raise(rb_eIOError, "Connection failed");
 		return Qnil;
 	}
 	tds_free_connection(conn->connection);
