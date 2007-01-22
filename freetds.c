@@ -8,6 +8,8 @@ static VALUE rb_Driver;
 static VALUE rb_Connection;
 static VALUE rb_Statement;
 
+static VALUE rb_DateTime;
+
 typedef struct _tds_connection {
 	TDSSOCKET *tds;
 	TDSLOGIN *login;
@@ -15,37 +17,7 @@ typedef struct _tds_connection {
 	TDSCONNECTION *connection;
 } TDS_Connection;
 
-static void free_tds_connection(void *p) {
-	free(p);
-}
-
-static VALUE alloc_tds_connection(VALUE klass) {
-	TDS_Connection* conn;
-	VALUE result;
-	
-	conn = malloc(sizeof(TDS_Connection));
-	bzero(conn, sizeof(TDS_Connection));
-	
-	result = Data_Wrap_Struct(klass, 0, free_tds_connection, conn);
-	
-	return result;
-}
-
-static int connection_handle_message(TDSCONTEXT * context, TDSSOCKET * tds, TDSMESSAGE * msg)
-{
-	if (msg->msg_number == 0) {
-		fprintf(stderr, "%s\n", msg->message);
-		return 0;
-	}
-
-	if (msg->msg_number != 5701 && msg->msg_number != 5703
-	    && msg->msg_number != 20018) {
-		fprintf(stderr, "Msg %d, Level %d, State %d, Server %s, Line %d\n%s\n",
-			msg->msg_number, msg->msg_level, msg->msg_state, msg->server, msg->line_number, msg->message);
-	}
-
-	return 0;
-}
+/*** helper functions ***/
 
 static char* value_to_cstr(VALUE value) {
 	VALUE str;
@@ -65,6 +37,97 @@ static char* value_to_cstr(VALUE value) {
 	}
 	
 	return result;
+}
+
+static VALUE getConstant(const char *name, VALUE module)
+{
+   VALUE owner = module,
+         constants,
+         string,
+         exists,
+         entry;
+
+   /* Check that we've got somewhere to look. */
+   if(owner == Qnil)
+   {
+      owner = rb_cModule;
+   }
+   constants = rb_funcall(owner, rb_intern("constants"), 0),
+   string    = rb_str_new2(name),
+   exists    = rb_funcall(constants, rb_intern("include?"), 1, string);
+
+   if(exists != Qfalse)
+   {
+      ID    id     = rb_intern(name);
+      VALUE symbol = ID2SYM(id);
+
+      entry = rb_funcall(owner, rb_intern("const_get"), 1, symbol);
+   }
+
+   return(entry);
+}
+
+static VALUE getClass(const char *name)
+{
+   VALUE klass = getConstant(name, Qnil);
+
+   if(klass != Qnil)
+   {
+      VALUE type = rb_funcall(klass, rb_intern("class"), 0);
+
+      if(type != rb_cClass)
+      {
+         klass = Qnil;
+      }
+   }
+
+   return(klass);
+}
+
+/*** end of helper functions ***/
+
+static void free_tds_connection(void *p) {
+	free(p);
+}
+
+static VALUE alloc_tds_connection(VALUE klass) {
+	TDS_Connection* conn;
+	VALUE result;
+	
+	conn = malloc(sizeof(TDS_Connection));
+	bzero(conn, sizeof(TDS_Connection));
+	
+	result = Data_Wrap_Struct(klass, 0, free_tds_connection, conn);
+	
+	return result;
+}
+
+static int connection_handle_message(TDSCONTEXT * context, TDSSOCKET * tds, TDSMESSAGE * msg)
+{
+	VALUE self = (VALUE)tds_get_parent(tds);
+	
+	if (msg->msg_number == 0) {
+		VALUE messages = rb_iv_get(self, "@messages");
+		rb_ary_push(messages, rb_str_new2(msg->message));
+		return 0;
+	}
+
+	if (msg->msg_number != 5701 && msg->msg_number != 5703 && msg->msg_number != 20018) {
+		TDS_Connection* conn;		
+		VALUE errors = rb_iv_get(self, "@errors");
+		VALUE err = rb_hash_new();
+				
+		rb_hash_aset(err, rb_str_new2("error"), INT2FIX(msg->msg_number));
+		rb_hash_aset(err, rb_str_new2("level"), INT2FIX(msg->msg_level));
+		rb_hash_aset(err, rb_str_new2("state"), INT2FIX(msg->msg_state));
+		rb_hash_aset(err, rb_str_new2("server"), rb_str_new2(msg->server));
+		rb_hash_aset(err, rb_str_new2("line"), INT2FIX(msg->line_number));
+		rb_hash_aset(err, rb_str_new2("message"), rb_str_new2(msg->message));
+		
+		rb_ary_push(errors, err);
+	}
+
+	return 0;
 }
 
 static VALUE connection_Initialize(VALUE self, VALUE connection_hash) {
@@ -185,12 +248,35 @@ static VALUE connection_Initialize(VALUE self, VALUE connection_hash) {
 }
 
 static VALUE connection_Statement(VALUE self, VALUE query) {
-	VALUE statement = rb_class_new_instance(0, NULL, rb_Statement);
+	TDS_Connection* conn;
 	
-	rb_iv_set(statement, "@connection", self);
-	rb_iv_set(statement, "@query", query);
+	Data_Get_Struct(self, TDS_Connection, conn);
 	
-	return statement;
+	if(conn->tds) {
+		VALUE statement = rb_class_new_instance(0, NULL, rb_Statement);
+	
+		rb_iv_set(statement, "@connection", self);
+		rb_iv_set(statement, "@query", query);
+	
+		return statement;
+	} 
+	
+	rb_raise(rb_eEOFError, "The connection is closed");
+	return Qnil;
+}
+
+static VALUE connection_Close(VALUE self) {
+	TDS_Connection* conn;
+	
+	Data_Get_Struct(self, TDS_Connection, conn);
+	
+	tds_free_socket(conn->tds);
+	tds_free_login(conn->login);
+	tds_free_context(conn->context);	
+	
+	conn->tds = NULL;
+	conn->login = NULL;
+	conn->context = NULL;
 }
 
 static char* column_type_name(TDSCOLUMN* column) {
@@ -333,51 +419,6 @@ static char* column_type_name(TDSCOLUMN* column) {
 	return column_type;
 }
 
-VALUE getConstant(const char *name, VALUE module)
-{
-   VALUE owner = module,
-         constants,
-         string,
-         exists,
-         entry;
-
-   /* Check that we've got somewhere to look. */
-   if(owner == Qnil)
-   {
-      owner = rb_cModule;
-   }
-   constants = rb_funcall(owner, rb_intern("constants"), 0),
-   string    = rb_str_new2(name),
-   exists    = rb_funcall(constants, rb_intern("include?"), 1, string);
-
-   if(exists != Qfalse)
-   {
-      ID    id     = rb_intern(name);
-      VALUE symbol = ID2SYM(id);
-
-      entry = rb_funcall(owner, rb_intern("const_get"), 1, symbol);
-   }
-
-   return(entry);
-}
-
-VALUE getClass(const char *name)
-{
-   VALUE klass = getConstant(name, Qnil);
-
-   if(klass != Qnil)
-   {
-      VALUE type = rb_funcall(klass, rb_intern("class"), 0);
-
-      if(type != rb_cClass)
-      {
-         klass = Qnil;
-      }
-   }
-
-   return(klass);
-}
-
 static VALUE statement_Execute(VALUE self) {
 	int rc, i;
 	TDSCOLUMN *col;
@@ -402,6 +443,7 @@ static VALUE statement_Execute(VALUE self) {
 	VALUE columns;
 	VALUE rows;
 	VALUE status;
+	VALUE errors;
 	
 	VALUE date_parts[8];
 	
@@ -430,6 +472,10 @@ static VALUE statement_Execute(VALUE self) {
 
 	rb_iv_set(self, "@status", Qnil);
 	
+	rb_iv_set(self, "@messages", rb_ary_new());
+	errors = rb_ary_new();
+	rb_iv_set(self, "@errors", errors);
+	
 	tds_set_parent(conn->tds, (void*)self);
 	
 	tds = conn->tds;
@@ -452,16 +498,11 @@ static VALUE statement_Execute(VALUE self) {
 					rb_hash_aset(column, column_size, INT2FIX(tds->res_info->columns[i]->column_size));
 					rb_hash_aset(column, column_scale, INT2FIX(tds->res_info->columns[i]->column_scale));
 					rb_hash_aset(column, column_precision, INT2FIX(tds->res_info->columns[i]->column_prec));					
-//					fprintf(stdout, "%s\t", tds->res_info->columns[i]->column_name);
 				}
-//				fprintf(stdout, "\n");
 			}
 			break;
 		case TDS_ROW_RESULT:
-//			rows = 0;
-			while ((rc = tds_process_row_tokens(tds, &rowtype, &computeid)) == TDS_SUCCEED) {
-//				rows++;
-				
+			while ((rc = tds_process_row_tokens(tds, &rowtype, &computeid)) == TDS_SUCCEED) {				
 				if (!tds->res_info)
 					continue;
 
@@ -471,8 +512,6 @@ static VALUE statement_Execute(VALUE self) {
 				for (i = 0; i < tds->res_info->num_cols; i++) {
 					if (tds_get_null(tds->res_info->current_row, i)) {
 						rb_hash_aset(row, rb_str_new2(tds->res_info->columns[i]->column_name), Qnil);
-//						if (print_rows)
-//							fprintf(stdout, "NULL\t");
 						continue;
 					}
 					col = tds->res_info->columns[i];
@@ -514,7 +553,7 @@ static VALUE statement_Execute(VALUE self) {
 								date_parts[5] = INT2FIX(date_rec.second);
 								
 								//printf("**%d/%d/%d %d:%d:%d\n", date_rec.year, date_rec.month, date_rec.day, date_rec.hour, date_rec.minute, date_rec.second);
-								column_value = rb_funcall2(getClass("DateTime"), rb_intern("civil"), 6, &date_parts[0]);
+								column_value = rb_funcall2(rb_DateTime, rb_intern("civil"), 6, &date_parts[0]);
 							} else {
 								column_value = Qnil;
 							}
@@ -560,7 +599,6 @@ static VALUE statement_Execute(VALUE self) {
 					case XSYBVARBINARY:
 					case XSYBBINARY:
 					case SYBIMAGE:
-//						printf("BLOB SIZE: %d\n", tds->res_info->columns[i]->column_cur_size);
 						rb_hash_aset(row, rb_str_new2(tds->res_info->columns[i]->column_name), rb_str_new((char *) ((TDSBLOB *) src)->textvalue, tds->res_info->columns[i]->column_cur_size));						
 						break;
 
@@ -570,13 +608,10 @@ static VALUE statement_Execute(VALUE self) {
 
 					
 				}
-//				if (print_rows)
-//					fprintf(stdout, "\n");
 
 			}
 			break;
 		case TDS_STATUS_RESULT:
-//			printf("(return status = %d)\n", tds->ret_status);
 			rb_iv_set(self, "@status", INT2FIX(tds->ret_status));
 			
 			break;
@@ -586,6 +621,12 @@ static VALUE statement_Execute(VALUE self) {
 	}
 	
 	tds_set_parent(conn->tds, NULL);
+
+	VALUE err = rb_funcall(errors, rb_intern("first"), 0);
+	if(RTEST(err)) {
+		char* error_message = value_to_cstr(rb_hash_aref(err, rb_str_new2("message")));
+		rb_raise(rb_eIOError, error_message);
+	}
 	
 	return Qnil;	
 }
@@ -597,8 +638,17 @@ static VALUE statement_Columns(VALUE self) {
 static VALUE statement_Rows(VALUE self) {
 	return rb_iv_get(self, "@rows");
 }
+
 static VALUE statement_Status(VALUE self) {
 	return rb_iv_get(self, "@status");
+}
+
+static VALUE statement_Messages(VALUE self) {
+	return rb_iv_get(self, "@messages");
+}
+
+static VALUE statement_Errors(VALUE self) {
+	return rb_iv_get(self, "@errors");
 }
 
 static VALUE driver_Connect(VALUE self, VALUE connection_hash ) {
@@ -607,7 +657,8 @@ static VALUE driver_Connect(VALUE self, VALUE connection_hash ) {
 
 void Init_freetds() {
 	
-	rb_require("date");
+	rb_require("date");	
+	rb_DateTime = getClass("DateTime");
 	
 	// initialize the tds library	
 	rb_FreeTDS = rb_define_module ("FreeTDS");
@@ -618,12 +669,14 @@ void Init_freetds() {
 	rb_Connection = rb_define_class_under(rb_FreeTDS, "Connection", rb_cObject);
 	rb_define_alloc_func(rb_Connection, alloc_tds_connection);
 	rb_define_method(rb_Connection, "initialize", connection_Initialize, 1);
-//	rb_define_method(rb_Connection, "execute", connection_Execute, 1);
 	rb_define_method(rb_Connection, "statement", connection_Statement, 1);
-
+	rb_define_method(rb_Connection, "close", connection_Close, 0);
+	
 	rb_Statement = rb_define_class_under(rb_FreeTDS, "Statement", rb_cObject);
 	rb_define_method(rb_Statement, "execute", statement_Execute, 0);
 	rb_define_method(rb_Statement, "columns", statement_Columns, 0);
 	rb_define_method(rb_Statement, "rows", statement_Rows, 0);
 	rb_define_method(rb_Statement, "status", statement_Status, 0);
+	rb_define_method(rb_Statement, "messages", statement_Messages, 0);
+	rb_define_method(rb_Statement, "errors", statement_Errors, 0);
 }
