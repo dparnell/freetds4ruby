@@ -163,6 +163,8 @@ static VALUE connection_Initialize(VALUE self, VALUE connection_hash) {
 	temp = rb_hash_aref(connection_hash, rb_str_new2("port"));
 	if(RTEST(temp)) {
 		port = FIX2INT(temp);
+	} else {
+		port = 1433;
 	}
 
 	temp = rb_hash_aref(connection_hash, rb_str_new2("username"));

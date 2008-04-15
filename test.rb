@@ -6,7 +6,7 @@ class TestFreeTDS < Test::Unit::TestCase
 
   def setup
     @config = {
-      'servername' => 'beast',
+      'hostname' => 'beast.local',
       'username' => 'sa',
       'password' => 'sa'
     }
@@ -18,11 +18,20 @@ class TestFreeTDS < Test::Unit::TestCase
     
     connection = driver.connect(@config)
 
-    connection.statement('use eCareDev').execute
+    begin
+      connection.statement('drop database freetds_test').execute      
+    rescue  
+    end
+    
+    connection.statement('create database freetds_test').execute
+      
+    connection.statement('use freetds_test').execute
+    connection.statement('create table posts ( id int, name varchar(100), body text, post_date datetime)').execute
+    connection.statement("insert into posts values (1, 'Foo', 'This is a test message', getdate())").execute
 
     connection.statement("SET TEXTSIZE #{1024*1024*1024}").execute
 
-    statement = connection.statement('select * from Patient where Patient=144')
+    statement = connection.statement('select * from posts where id=1')
     statement.execute
 
     assert_not_nil(statement.columns, "columns should not be nil")
