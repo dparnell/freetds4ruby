@@ -107,12 +107,14 @@ static int connection_handle_message(TDSCONTEXT * context, TDSSOCKET * tds, TDSM
 	VALUE self = (VALUE)tds_get_parent(tds);
 
 	if(RTEST(self)) {
-		if (msg->msg_number == 0) {
+		if (msg->msg_level == 0) {
 			VALUE messages = rb_iv_get(self, "@messages");
 			rb_ary_push(messages, rb_str_new2(msg->message));
 			return 0;
 		}
 
+//		printf("got message %d - %d - %s\n", msg->msg_level, msg->msg_number, msg->message);
+		
 		if (msg->msg_number != 5701 && msg->msg_number != 5703 && msg->msg_number != 20018) {
 			TDS_Connection* conn;		
 			VALUE errors = rb_iv_get(self, "@errors");
@@ -157,26 +159,26 @@ static VALUE connection_Initialize(VALUE self, VALUE connection_hash) {
 	conn->context->err_handler = connection_handle_message;
 	
 	/* now let's get the connection parameters */
-	temp = rb_hash_aref(connection_hash, rb_str_new2("hostname"));
+	temp = rb_hash_aref(connection_hash, ID2SYM(rb_intern("hostname")));
 	hostname = value_to_cstr(temp);
 
-	temp = rb_hash_aref(connection_hash, rb_str_new2("port"));
+	temp = rb_hash_aref(connection_hash, ID2SYM(rb_intern("port")));
 	if(RTEST(temp)) {
 		port = FIX2INT(temp);
 	} else {
 		port = 1433;
 	}
 
-	temp = rb_hash_aref(connection_hash, rb_str_new2("username"));
+	temp = rb_hash_aref(connection_hash, ID2SYM(rb_intern("username")));
 	username = value_to_cstr(temp);
 	
-	temp = rb_hash_aref(connection_hash, rb_str_new2("password"));
+	temp = rb_hash_aref(connection_hash, ID2SYM(rb_intern("password")));
 	password = value_to_cstr(temp);
 
-	temp = rb_hash_aref(connection_hash, rb_str_new2("servername"));
+	temp = rb_hash_aref(connection_hash, ID2SYM(rb_intern("servername")));
 	servername = value_to_cstr(temp);
 
-	temp = rb_hash_aref(connection_hash, rb_str_new2("charset"));
+	temp = rb_hash_aref(connection_hash, ID2SYM(rb_intern("charset")));
 	charset = value_to_cstr(temp);
 
 	if(charset==NULL) {
