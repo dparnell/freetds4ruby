@@ -146,58 +146,76 @@ static VALUE connection_Initialize(VALUE self, VALUE connection_hash) {
 	VALUE temp;
 	VALUE errors;
 	
+	printf("A");
 	Data_Get_Struct(self, TDS_Connection, conn);
-
+	printf("B");
 	conn->login = tds_alloc_login();
+	printf("C");
 	conn->context = tds_alloc_context();
+	printf("D");
 	if (conn->context->locale && !conn->context->locale->date_fmt) {
+		printf("E");
 		/* set default in case there's no locale file */
 		conn->context->locale->date_fmt = strdup("%b %e %Y %I:%M%p");
 	}
+	printf("F");
 	
 	conn->context->msg_handler = connection_handle_message;
 	conn->context->err_handler = connection_handle_message;
+	printf("G");
 	
 	/* now let's get the connection parameters */
 	temp = rb_hash_aref(connection_hash, ID2SYM(rb_intern("hostname")));
+	printf("H");
 	hostname = value_to_cstr(temp);
 
+	printf("I");
 	temp = rb_hash_aref(connection_hash, ID2SYM(rb_intern("port")));
 	if(RTEST(temp)) {
 		port = FIX2INT(temp);
 	} else {
 		port = 1433;
 	}
+	printf("J");
 
 	temp = rb_hash_aref(connection_hash, ID2SYM(rb_intern("username")));
 	username = value_to_cstr(temp);
+	printf("K");
 	
 	temp = rb_hash_aref(connection_hash, ID2SYM(rb_intern("password")));
 	password = value_to_cstr(temp);
+	printf("L");
 
 	temp = rb_hash_aref(connection_hash, ID2SYM(rb_intern("servername")));
 	servername = value_to_cstr(temp);
+	printf("M");
 
 	temp = rb_hash_aref(connection_hash, ID2SYM(rb_intern("charset")));
 	charset = value_to_cstr(temp);
+	printf("N");
 
 	if(charset==NULL) {
 		charset = strdup("ISO-8859-1");
 	}
+	printf("O");
 	
 	/* validate parameters */
 	if (!servername && !hostname) {
 		rb_raise(rb_eArgError, "Either servername or hostname must be specified");
 		return Qnil;
 	}
+	printf("P");
+	
 	if (hostname && !port) {
 		rb_raise(rb_eArgError, "No port specified");
 		return Qnil;
 	}
+	printf("Q");
 	if (!username) {
 		rb_raise(rb_eArgError, "No username specified");
 		return Qnil;
 	}
+	printf("R");
 	if (!password) {
 		password = strdup("");
 	}	
@@ -226,6 +244,7 @@ static VALUE connection_Initialize(VALUE self, VALUE connection_hash) {
 		tds_set_language(conn->login, "us_english");
 		tds_set_passwd(conn->login, password);
 	}	
+	printf("S");
 	
 	/* free up all the memory */
 	if (hostname)
@@ -239,15 +258,18 @@ static VALUE connection_Initialize(VALUE self, VALUE connection_hash) {
 	if (charset)
 		free(charset);
 
+	printf("T");
 	rb_iv_set(self, "@messages", rb_ary_new());
 	errors = rb_ary_new();
 	rb_iv_set(self, "@errors", errors);
+	printf("U");
 
 	/* Try to open a connection */
 	conn->tds = tds_alloc_socket(conn->context, 512);
 	tds_set_parent(conn->tds, (void*)self);
 	conn->connection = tds_read_config_info(NULL, conn->login, conn->context->locale);
 	if (!conn->connection || tds_connect(conn->tds, conn->connection) == TDS_FAIL) {
+		printf("V");
 		tds_free_connection(conn->connection);
 		
 		VALUE err = rb_funcall(errors, rb_intern("first"), 0);
@@ -257,11 +279,15 @@ static VALUE connection_Initialize(VALUE self, VALUE connection_hash) {
 			
 			return Qnil;
 		}
+		printf("W");
 		
 		rb_raise(rb_eIOError, "Connection failed");
 		return Qnil;
 	}
+	printf("X");
+	
 	tds_free_connection(conn->connection);
+	printf("Y");
 	
 	return Qnil;
 }
@@ -431,7 +457,7 @@ static char* column_type_name(TDSCOLUMN* column) {
 		column_type = "uniqueidentifier";
 		break;
 	default:
-		printf("here - %d\n", column->column_type);
+//		printf("here - %d\n", column->column_type);
 		return NULL;
 	}
 	

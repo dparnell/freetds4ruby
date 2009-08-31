@@ -6,7 +6,7 @@ class TestFreeTDS < Test::Unit::TestCase
 
   def setup
     @config = {
-      :hostname => 'healthsolve-2k.local',
+      :hostname => 'sbs2003.local',
       :username => 'sa',
       :password => 'h3althsolv3'
     }
