@@ -516,9 +516,6 @@ static VALUE statement_Execute(VALUE self) {
 				return 1;
 			}
 
-			row = rb_hash_new();
-			rb_ary_push(rows, row);
-			
 			col_data = (EX_COLUMN_DATA *)malloc(num_cols * sizeof (EX_COLUMN_DATA));
 			if (col_data == NULL)
 			 {
@@ -565,7 +562,10 @@ static VALUE statement_Execute(VALUE self) {
 			// Fetch data
 			while (((rc = ct_fetch(cmd, CS_UNUSED, CS_UNUSED, CS_UNUSED, &rows_read)) == CS_SUCCEED) || (rc == CS_ROW_FAIL)) {
 				row_count = row_count + rows_read;
-			
+
+				row = rb_hash_new();
+				rb_ary_push(rows, row);
+				
 				// Create Ruby objects
 				for (i = 0; i < num_cols; i++) {
 					// ctype = tds_get_conversion_type(cols[i].datatype, cols[i].maxlength);
@@ -666,6 +666,12 @@ static VALUE statement_Execute(VALUE self) {
 				
 				}
 			}
+			
+			if( rc != CS_END_DATA )
+			{
+			    fprintf(stderr, "ct_fetch failed");
+			}
+			
 			break;
 		case CS_CMD_SUCCEED:
 			rb_iv_set(self, "@status", Qnil);

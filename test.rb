@@ -28,16 +28,17 @@ class TestFreeTDS < Test::Unit::TestCase
     connection.statement('use freetds_test').execute
     connection.statement('create table posts ( id int, name varchar(100), body text, post_date datetime)').execute
     connection.statement("insert into posts values (1, 'Foo', 'This is a test message', getdate())").execute
+    connection.statement("insert into posts values (2, 'Bar', 'This is another test message', getdate())").execute
 
     connection.statement("SET TEXTSIZE #{1024*1024*1024}").execute
 
-    statement = connection.statement('select * from posts where id=1')
+    statement = connection.statement('select * from posts')
     statement.execute
 
     assert_not_nil(statement.columns, "columns should not be nil")
     # assert_equal(4, statement.columns.size, "there should be 4 columns") # TODO: columns not implemented yet
     assert_not_nil(statement.rows, "rows should not be nil")
-    assert_equal(1, statement.rows.length, "only one row should have been returned")
+    assert_equal(2, statement.rows.length, "two rows should have been returned")
     assert_nil(statement.status, "status should be nil")
     
     assert_equal(1, statement.rows[0]["id"], "post id should match")
