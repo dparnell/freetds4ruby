@@ -1,0 +1,10 @@
+FreeTDS Ruby driver
+
+To build:
+ruby extconf.rb
+make
+
+Run the tests to see if it's working:
+ruby test.rb
+
+You'll need to obviously have FreeTDS installed first. Testing had occurred on Mac OS X 10.6.4 with FreeTDS 0.82.

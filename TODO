@@ -1,0 +1,9 @@
+- null value detection
+- better integer conversion?
+- clean up comments and unused variables in source
+- statement handle drop
+- memory leaks?
+- benchmarks
+- unicode?
+- ruby 1.9?
+- more tests, of course
