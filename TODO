@@ -7,3 +7,5 @@
 - unicode?
 - ruby 1.9?
 - more tests, of course
+- better (faster) date parsing
+- better bool testing?

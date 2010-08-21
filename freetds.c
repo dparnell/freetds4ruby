@@ -487,15 +487,6 @@ static VALUE statement_Execute(VALUE self) {
 	rb_iv_set(self, "@messages", rb_ary_new());
 	errors = rb_ary_new();
 	rb_iv_set(self, "@errors", errors);
-	
-	// tds_set_parent(conn->tds, (void*)self);
-	// 
-	// tds = conn->tds;
-	// rc = tds_submit_query(tds, buf);
-	// if (rc != TDS_SUCCEED) {
-	// 	fprintf(stderr, "tds_submit_query() failed\n");
-	// 	return 1;
-	// }
 
 	ct_cmd_alloc(conn->connection, &cmd);
 	ct_command(cmd, CS_LANG_CMD, buf, CS_NULLTERM, CS_UNUSED);
@@ -568,28 +559,26 @@ static VALUE statement_Execute(VALUE self) {
 				
 				// Create Ruby objects
 				for (i = 0; i < num_cols; i++) {
-					// ctype = tds_get_conversion_type(cols[i].datatype, cols[i].maxlength);
-					
 					switch (cols[i].datatype) {
+					case CS_TINYINT_TYPE:
 					case CS_BIT_TYPE:
-						// tds_convert(conn->context, ctype, (TDS_CHAR *) src, srclen, SYBINT1, &dres);
-						// if(dres.ti) {
-						// 	rb_hash_aset(row, rb_str_new2(tds->res_info->columns[i]->column_name), Qtrue);
-						// } else {
-						// 	rb_hash_aset(row, rb_str_new2(tds->res_info->columns[i]->column_name), Qfalse);							
-						// }
-						rb_hash_aset(row, rb_str_new2(cols[i].name), Qnil);
+						col.datatype  = CS_CHAR_TYPE;
+						col.format    = CS_FMT_NULLTERM;
+						col.locale    = NULL;
+						cs_convert(conn->context, &cols[i], col_data[i].value, &col, output, &output_len);
+						// TODO: Could we do this better?
+						if(atoi(output) == 1) {
+							rb_hash_aset(row, rb_str_new2(cols[i].name), Qtrue);
+						} else {
+							rb_hash_aset(row, rb_str_new2(cols[i].name), Qfalse);
+						}
 						break;
 					case CS_INT_TYPE:
-					case CS_TINYINT_TYPE:
 					case CS_SMALLINT_TYPE:
 						col.datatype  = CS_CHAR_TYPE;
 						col.format    = CS_FMT_NULLTERM;
 						col.locale    = NULL;
 						cs_convert(conn->context, &cols[i], col_data[i].value, &col, output, &output_len);
-						// tds_convert(conn->context, ctype, col_data[i].value, col_data[i].valuelen, CS_INT_TYPE, &dres);
-						// rb_hash_aset(row, rb_str_new2(tds->res_info->columns[i]->column_name), LONG2NUM(dres.bi));												
-						rb_hash_aset(row, rb_str_new2(cols[i].name), Qnil);
 						rb_hash_aset(row, rb_str_new2(cols[i].name), INT2FIX(atoi(output)));
 						break;
 					
@@ -619,7 +608,6 @@ static VALUE statement_Execute(VALUE self) {
 						// 	
 						// 	rb_hash_aset(row, rb_str_new2(tds->res_info->columns[i]->column_name), column_value);
 						// } else {
-							rb_hash_aset(row, rb_str_new2(cols[i].name), Qnil);
 							rb_hash_aset(row, rb_str_new2(cols[i].name), rb_funcall(rb_DateTime, rb_intern("parse"), 1, rb_str_new2(output)));
 						// }
 						break;
@@ -630,9 +618,11 @@ static VALUE statement_Execute(VALUE self) {
 					case CS_MONEY4_TYPE: 
 					case CS_NUMERIC_TYPE:
 					case CS_DECIMAL_TYPE:
-						// tds_convert(conn->context, ctype, (TDS_CHAR *) src, srclen, SYBFLT8, &dres);
-						// rb_hash_aset(row, rb_str_new2(tds->res_info->columns[i]->column_name), rb_float_new(dres.f));						
-						rb_hash_aset(row, rb_str_new2(cols[i].name), Qnil);
+						col.datatype  = CS_CHAR_TYPE;
+						col.format    = CS_FMT_NULLTERM;
+						col.locale    = NULL;
+						cs_convert(conn->context, &cols[i], col_data[i].value, &col, output, &output_len);
+						rb_hash_aset(row, rb_str_new2(cols[i].name), rb_float_new(atof(output)));
 						break;
 					
 					case CS_CHAR_TYPE:
@@ -721,6 +711,10 @@ static VALUE statement_Errors(VALUE self) {
 	return rb_iv_get(self, "@errors");
 }
 
+static VALUE statement_Drop(VALUE self) {
+	// TODO: Let's free our memory here...
+	return Qnil;
+}
 static VALUE driver_Connect(VALUE self, VALUE connection_hash ) {
 	return rb_class_new_instance(1, &connection_hash, rb_Connection);
 }
@@ -749,4 +743,5 @@ void Init_freetds() {
 	rb_define_method(rb_Statement, "status", statement_Status, 0);
 	rb_define_method(rb_Statement, "messages", statement_Messages, 0);
 	rb_define_method(rb_Statement, "errors", statement_Errors, 0);
+	rb_define_method(rb_Statement, "drop", statement_Drop, 0);
 }
