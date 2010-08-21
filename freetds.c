@@ -14,6 +14,14 @@ typedef struct _tds_connection {
 	CS_CONNECTION *connection;
 } TDS_Connection;
 
+typedef struct _ex_column_data
+{
+  CS_INT        datatype;
+  CS_CHAR         *value;
+  CS_INT        valuelen;
+  CS_SMALLINT  indicator;
+} EX_COLUMN_DATA;
+
 /*** helper functions ***/
 
 static char* value_to_cstr(VALUE value) {
@@ -236,12 +244,11 @@ static VALUE connection_Initialize(VALUE self, VALUE connection_hash) {
 }
 
 static VALUE connection_Statement(VALUE self, VALUE query) {
-/*	
 	TDS_Connection* conn;
 	
 	Data_Get_Struct(self, TDS_Connection, conn);
-	
-	if(conn->tds) {
+
+	if(conn->connection) {
 		VALUE statement = rb_class_new_instance(0, NULL, rb_Statement);
 	
 		rb_iv_set(statement, "@connection", self);
@@ -251,28 +258,27 @@ static VALUE connection_Statement(VALUE self, VALUE query) {
 	} 
 	
 	rb_raise(rb_eEOFError, "The connection is closed");
-*/	
+
 	return Qnil;
 }
 
 static VALUE connection_Close(VALUE self) {
-/*	
 	TDS_Connection* conn;
 	
 	Data_Get_Struct(self, TDS_Connection, conn);
+
+	// TODO: find ct-lib equilivents
+	// tds_free_socket(conn->tds);
+	// tds_free_login(conn->login);
+	// tds_free_context(conn->context);	
 	
-	tds_free_socket(conn->tds);
-	tds_free_login(conn->login);
-	tds_free_context(conn->context);	
-	
-	conn->tds = NULL;
-	conn->login = NULL;
+	conn->connection = NULL;
 	conn->context = NULL;
-*/
+
 	return Qnil;
 }
 
-/*	
+/*
 static char* column_type_name(TDSCOLUMN* column) {
 	char *column_type = NULL;
 
@@ -415,24 +421,32 @@ static char* column_type_name(TDSCOLUMN* column) {
 */
 
 static VALUE statement_Execute(VALUE self) {
-/*	
-	int rc, i;
-	TDSCOLUMN *col;
+	int i;
+	CS_DATAFMT col;
+	CS_DATAFMT *cols;
+	EX_COLUMN_DATA *col_data;
 	int ctype;
-	CONV_RESULT dres;
+	// CONV_RESULT dres;
 	unsigned char *src;
-	TDS_INT srclen;
-	TDS_INT rowtype;
-	TDS_INT resulttype;
-	TDS_INT computeid;
+	CS_INT rc;
+	CS_INT srclen;
+	CS_INT rowtype;
+	CS_INT resulttype;
+	CS_INT computeid;
+	CS_INT num_cols;
+	CS_INT col_len;
+	CS_INT row_count = 0;
+	CS_INT rows_read;
+	CS_SMALLINT indicator;
+
 	struct timeval start, stop;
 	int print_rows = 1;
 	char message[128];
 	char* buf;
-	TDSDATEREC date_rec;
+	CS_DATEREC date_rec;
 	
 	TDS_Connection* conn;
-	TDSSOCKET * tds;
+	CS_COMMAND * cmd;
 	
 	VALUE connection;
 	VALUE query;
@@ -472,158 +486,197 @@ static VALUE statement_Execute(VALUE self) {
 	errors = rb_ary_new();
 	rb_iv_set(self, "@errors", errors);
 	
-	tds_set_parent(conn->tds, (void*)self);
+	// tds_set_parent(conn->tds, (void*)self);
+	// 
+	// tds = conn->tds;
+	// rc = tds_submit_query(tds, buf);
+	// if (rc != TDS_SUCCEED) {
+	// 	fprintf(stderr, "tds_submit_query() failed\n");
+	// 	return 1;
+	// }
+
+	ct_cmd_alloc(conn->connection, &cmd);
+	ct_command(cmd, CS_LANG_CMD, buf, CS_NULLTERM, CS_UNUSED);
+	ct_send(cmd);
+
+	// TODO:
+	// - We should have an array of malloc'd cols
+	// - Then we bind / fetch to those
+	// - Finish conversions...
 	
-	tds = conn->tds;
-	rc = tds_submit_query(tds, buf);
-	if (rc != TDS_SUCCEED) {
-		fprintf(stderr, "tds_submit_query() failed\n");
-		return 1;
-	}
-
-	while ((rc = tds_process_result_tokens(tds, &resulttype, NULL)) == TDS_SUCCEED) {
+	while ((rc = ct_results(cmd, &resulttype)) == CS_SUCCEED) {
 		switch (resulttype) {
-		case TDS_ROWFMT_RESULT:
-			if (tds->res_info) {
-				for (i = 0; i < tds->res_info->num_cols; i++) {
-					column = rb_hash_new();
-					rb_ary_push(columns, column);
-					
-					rb_hash_aset(column, column_name, rb_str_new2(tds->res_info->columns[i]->column_name));
-					rb_hash_aset(column, column_type, rb_str_new2(column_type_name(tds->res_info->columns[i])));
-					rb_hash_aset(column, column_size, INT2FIX(tds->res_info->columns[i]->column_size));
-					rb_hash_aset(column, column_scale, INT2FIX(tds->res_info->columns[i]->column_scale));
-					rb_hash_aset(column, column_precision, INT2FIX(tds->res_info->columns[i]->column_prec));					
-				}
+		case CS_ROW_RESULT:
+			rc = ct_res_info(cmd, CS_NUMDATA, &num_cols, sizeof(num_cols), &col_len);
+			if (rc != CS_SUCCEED)
+			{
+				fprintf(stderr, "ct_res_info() failed\n");
+				return 1;
 			}
-			break;
-		case TDS_ROW_RESULT:
-			while ((rc = tds_process_row_tokens(tds, &rowtype, &computeid)) == TDS_SUCCEED) {				
-				if (!tds->res_info)
-					continue;
 
-				row = rb_hash_new();
-				rb_ary_push(rows, row);
-				
-				for (i = 0; i < tds->res_info->num_cols; i++) {
-					if (tds_get_null(tds->res_info->current_row, i)) {
-						rb_hash_aset(row, rb_str_new2(tds->res_info->columns[i]->column_name), Qnil);
-						continue;
-					}
-					col = tds->res_info->columns[i];
-					ctype = tds_get_conversion_type(col->column_type, col->column_size);
-
-					src = &(tds->res_info->current_row[col->column_offset]);
-					srclen = col->column_cur_size;
-
-					switch (col->column_type) {
-					case SYBBIT:
-					case SYBBITN:
-						tds_convert(tds->tds_ctx, ctype, (TDS_CHAR *) src, srclen, SYBINT1, &dres);
-						if(dres.ti) {
-							rb_hash_aset(row, rb_str_new2(tds->res_info->columns[i]->column_name), Qtrue);
-						} else {
-							rb_hash_aset(row, rb_str_new2(tds->res_info->columns[i]->column_name), Qfalse);							
-						}
-						break;
-					case SYBINT1:
-					case SYBINT2:
-					case SYBINT4:
-					case SYBINT8:
-					case SYBINTN:
-						tds_convert(tds->tds_ctx, ctype, (TDS_CHAR *) src, srclen, SYBINT8, &dres);
-						rb_hash_aset(row, rb_str_new2(tds->res_info->columns[i]->column_name), LONG2NUM(dres.bi));												
-						break;
-						
-					case SYBDATETIME:
-					case SYBDATETIME4:
-					case SYBDATETIMN:
-						if(tds_datecrack(SYBDATETIME, src, &date_rec)==TDS_SUCCEED) {				
-
-							if(date_rec.year && date_rec.month && date_rec.day) {
-								date_parts[0] = INT2FIX(date_rec.year);
-								date_parts[1] = INT2FIX(date_rec.month);
-								date_parts[2] = INT2FIX(date_rec.day);
-								date_parts[3] = INT2FIX(date_rec.hour);
-								date_parts[4] = INT2FIX(date_rec.minute);
-								date_parts[5] = INT2FIX(date_rec.second);
-								
-								//printf("**%d/%d/%d %d:%d:%d\n", date_rec.year, date_rec.month, date_rec.day, date_rec.hour, date_rec.minute, date_rec.second);
-								column_value = rb_funcall2(rb_DateTime, rb_intern("civil"), 6, &date_parts[0]);
-							} else {
-								column_value = Qnil;
-							}
-							
-							rb_hash_aset(row, rb_str_new2(tds->res_info->columns[i]->column_name), column_value);
-						} else {
-							rb_hash_aset(row, rb_str_new2(tds->res_info->columns[i]->column_name), Qnil);
-						}
-						break;
-						
-					case SYBREAL:
-					case SYBMONEY:
-					case SYBMONEY4:
-					case SYBFLT8:
-					case SYBFLTN:
-					case SYBMONEYN:
-					case SYBDECIMAL:
-					case SYBNUMERIC:
-						tds_convert(tds->tds_ctx, ctype, (TDS_CHAR *) src, srclen, SYBFLT8, &dres);
-						rb_hash_aset(row, rb_str_new2(tds->res_info->columns[i]->column_name), rb_float_new(dres.f));						
-						break;
-						
-					case SYBVARCHAR:
-					case SYBCHAR:
-					case XSYBVARCHAR:
-					case XSYBCHAR:
-					case SYBTEXT:
-					case XSYBNVARCHAR:
-					case XSYBNCHAR:
-					case SYBNTEXT:
-					
-					case SYBUNIQUE: // @todo should this one be handled differently?
-
-						if (tds_convert(tds->tds_ctx, ctype, (TDS_CHAR *) src, srclen, SYBVARCHAR, &dres) < 0)
-							continue;
-							
-						rb_hash_aset(row, rb_str_new2(tds->res_info->columns[i]->column_name), rb_str_new2(dres.c));
-
-						free(dres.c);
-						
-						break;
-						
-					case XSYBVARBINARY:
-					case XSYBBINARY:
-					case SYBIMAGE:
-						rb_hash_aset(row, rb_str_new2(tds->res_info->columns[i]->column_name), rb_str_new((char *) ((TDSBLOB *) src)->textvalue, tds->res_info->columns[i]->column_cur_size));						
-						break;
-
-//					default:
-//						printf("here - %d\n", column->column_type);
-					}
-
-					
-				}
-
-			}
-			break;
-		case TDS_STATUS_RESULT:
-			rb_iv_set(self, "@status", INT2FIX(tds->ret_status));
+			row = rb_hash_new();
+			rb_ary_push(rows, row);
 			
+			col_data = (EX_COLUMN_DATA *)malloc(num_cols * sizeof (EX_COLUMN_DATA));
+			if (col_data == NULL)
+			 {
+			    fprintf(stderr, "ex_fetch_data: malloc() failed");
+			    return CS_MEM_ERROR;
+			 }
+			 cols = (CS_DATAFMT *)malloc(num_cols * sizeof (CS_DATAFMT));
+			 if (cols == NULL)
+			 {
+			    fprintf(stderr, "ex_fetch_data: malloc() failed");
+			    free(col_data);
+			    return CS_MEM_ERROR;
+			 }
+			
+			
+			// Get column information
+			for (i = 0; i < num_cols; i++) {
+				// TODO: What is this doing?
+				// if (tds_get_null(tds->res_info->current_row, i)) {
+				// 	rb_hash_aset(row, rb_str_new2(tds->res_info->columns[i]->column_name), Qnil);
+				// 	continue;
+				// }
+				rc = ct_describe(cmd, (i+1), &cols[i]);
+				// ctype = tds_get_conversion_type(col->column_type, col->column_size);
+				// col.maxlength = ex_display_dlen(&col) + 1;
+				col.datatype = CS_CHAR_TYPE;
+				col.format = CS_FMT_NULLTERM;
+				col_data[i].value = (CS_CHAR *)malloc(cols[i].maxlength);
+				if (col_data[i].value == NULL)
+				{
+					fprintf(stderr, "col_data malloc() failed");
+					return CS_MEM_ERROR;
+				}
+				
+				rc = ct_bind(cmd, (i + 1), &cols[i], col_data[i].value, &col_data[i].valuelen, &col_data[i].indicator);
+				if (rc != CS_SUCCEED)
+				{
+					fprintf(stderr, "ct_bind() failed");
+					break;
+				}
+			}
+			
+			// Fetch data
+			while (((rc = ct_fetch(cmd, CS_UNUSED, CS_UNUSED, CS_UNUSED, &rows_read)) == CS_SUCCEED) || (rc == CS_ROW_FAIL)) {
+				row_count = row_count + rows_read;
+			
+				// Create Ruby objects
+				for (i = 0; i < num_cols; i++) {
+					// ctype = tds_get_conversion_type(cols[i].datatype, cols[i].maxlength);
+					
+					switch (cols[i].datatype) {
+					case CS_BIT_TYPE:
+						// tds_convert(conn->context, ctype, (TDS_CHAR *) src, srclen, SYBINT1, &dres);
+						// if(dres.ti) {
+						// 	rb_hash_aset(row, rb_str_new2(tds->res_info->columns[i]->column_name), Qtrue);
+						// } else {
+						// 	rb_hash_aset(row, rb_str_new2(tds->res_info->columns[i]->column_name), Qfalse);							
+						// }
+						rb_hash_aset(row, rb_str_new2(cols[i].name), Qnil);
+						break;
+					case CS_INT_TYPE:
+					case CS_TINYINT_TYPE:
+					case CS_SMALLINT_TYPE:
+						// tds_convert(conn->context, ctype, col_data[i].value, col_data[i].valuelen, CS_INT_TYPE, &dres);
+						// rb_hash_aset(row, rb_str_new2(tds->res_info->columns[i]->column_name), LONG2NUM(dres.bi));												
+						rb_hash_aset(row, rb_str_new2(cols[i].name), Qnil);
+						break;
+					
+					case CS_DATETIME_TYPE:
+					case CS_DATETIME4_TYPE:
+						// if(tds_datecrack(SYBDATETIME, src, &date_rec)==TDS_SUCCEED) {				
+						// 
+						// 	if(date_rec.year && date_rec.month && date_rec.day) {
+						// 		date_parts[0] = INT2FIX(date_rec.year);
+						// 		date_parts[1] = INT2FIX(date_rec.month);
+						// 		date_parts[2] = INT2FIX(date_rec.day);
+						// 		date_parts[3] = INT2FIX(date_rec.hour);
+						// 		date_parts[4] = INT2FIX(date_rec.minute);
+						// 		date_parts[5] = INT2FIX(date_rec.second);
+						// 		
+						// 		//printf("**%d/%d/%d %d:%d:%d\n", date_rec.year, date_rec.month, date_rec.day, date_rec.hour, date_rec.minute, date_rec.second);
+						// 		column_value = rb_funcall2(rb_DateTime, rb_intern("civil"), 6, &date_parts[0]);
+						// 	} else {
+						// 		column_value = Qnil;
+						// 	}
+						// 	
+						// 	rb_hash_aset(row, rb_str_new2(tds->res_info->columns[i]->column_name), column_value);
+						// } else {
+							rb_hash_aset(row, rb_str_new2(cols[i].name), Qnil);
+						// }
+						break;
+					
+					case CS_REAL_TYPE:
+					case CS_FLOAT_TYPE:
+					case CS_MONEY_TYPE:
+					case CS_MONEY4_TYPE: 
+					case CS_NUMERIC_TYPE:
+					case CS_DECIMAL_TYPE:
+						// tds_convert(conn->context, ctype, (TDS_CHAR *) src, srclen, SYBFLT8, &dres);
+						// rb_hash_aset(row, rb_str_new2(tds->res_info->columns[i]->column_name), rb_float_new(dres.f));						
+						rb_hash_aset(row, rb_str_new2(cols[i].name), Qnil);
+						break;
+					
+					case CS_CHAR_TYPE:
+					case CS_LONGCHAR_TYPE:
+					case CS_TEXT_TYPE:
+					case CS_VARCHAR_TYPE:
+					case CS_UNICHAR_TYPE:
+					case CS_UNIQUE_TYPE: // @todo should this one be handled differently?
+						
+						// if (tds_convert(conn->context, ctype, (TDS_CHAR *) src, srclen, SYBVARCHAR, &dres) < 0)
+						// 	continue;
+						// 	
+						rb_hash_aset(row, rb_str_new2(cols[i].name), rb_str_new2(col_data[i].value));
+						// 
+						// free(dres.c);
+					
+						break;
+					
+					case CS_BINARY_TYPE:
+					case CS_LONGBINARY_TYPE:
+					case CS_VARBINARY_TYPE:
+					case CS_IMAGE_TYPE:
+						// rb_hash_aset(row, rb_str_new2(tds->res_info->columns[i]->column_name), rb_str_new((char *) ((TDSBLOB *) src)->textvalue, tds->res_info->columns[i]->column_cur_size));						
+						rb_hash_aset(row, rb_str_new2(cols[i].name), Qnil);
+						break;
+
+					default:
+						printf("here - %d\n", cols[i].datatype);
+					}
+
+				
+				}
+			}
+			break;
+		case CS_CMD_SUCCEED:
+			rb_iv_set(self, "@status", Qnil);
+			break;
+		case CS_CMD_FAIL:
+			rb_raise(rb_eIOError, "");
+			// rb_iv_set(self, "@status", INT2FIX(0));
+			break;
+		case CS_CMD_DONE:
+			rb_iv_set(self, "@status", Qnil);
 			break;
 		default:
+			fprintf(stderr, "ct_results returned unexpected result type\n");
 			break;
 		}
 	}
 	
-	tds_set_parent(conn->tds, NULL);
+	// tds_set_parent(conn->tds, NULL);
 
-	VALUE err = rb_funcall(errors, rb_intern("first"), 0);
-	if(RTEST(err)) {
-		char* error_message = value_to_cstr(rb_hash_aref(err, rb_str_new2("message")));
-		rb_raise(rb_eIOError, error_message);
-	}
-*/	
+	// VALUE err = rb_funcall(errors, rb_intern("first"), 0);
+	// if(RTEST(err)) {
+	// 	char* error_message = value_to_cstr(rb_hash_aref(err, rb_str_new2("message")));
+	// 	rb_raise(rb_eIOError, error_message);
+	// }
+
+	
 	return Qnil;	
 }
 

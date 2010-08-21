@@ -35,9 +35,13 @@ class TestFreeTDS < Test::Unit::TestCase
     statement.execute
 
     assert_not_nil(statement.columns, "columns should not be nil")
+    # assert_equal(4, statement.columns.size, "there should be 4 columns") # TODO: columns not implemented yet
     assert_not_nil(statement.rows, "rows should not be nil")
     assert_equal(1, statement.rows.length, "only one row should have been returned")
     assert_nil(statement.status, "status should be nil")
+    
+    assert_equal(1, statement.rows[0]["id"], "post id should match")
+    assert_equal("Foo", statement.rows[0]["name"], "post name should match")
 
     row = statement.rows.first
     statement.columns.each do |col|
