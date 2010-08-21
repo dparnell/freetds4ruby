@@ -42,6 +42,7 @@ class TestFreeTDS < Test::Unit::TestCase
     
     assert_equal(1, statement.rows[0]["id"], "post id should match")
     assert_equal("Foo", statement.rows[0]["name"], "post name should match")
+    assert_equal(DateTime, statement.rows[0]["post_date"].class, "post date should be a DateTime")
 
     row = statement.rows.first
     statement.columns.each do |col|

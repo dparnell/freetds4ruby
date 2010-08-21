@@ -444,6 +444,8 @@ static VALUE statement_Execute(VALUE self) {
 	char message[128];
 	char* buf;
 	CS_DATEREC date_rec;
+	char output[30];
+	CS_INT output_len;
 	
 	TDS_Connection* conn;
 	CS_COMMAND * cmd;
@@ -542,8 +544,9 @@ static VALUE statement_Execute(VALUE self) {
 				rc = ct_describe(cmd, (i+1), &cols[i]);
 				// ctype = tds_get_conversion_type(col->column_type, col->column_size);
 				// col.maxlength = ex_display_dlen(&col) + 1;
-				col.datatype = CS_CHAR_TYPE;
-				col.format = CS_FMT_NULLTERM;
+				// fprintf(stderr, "\ncol: %s, datatype: %d, maxlength: %d\n", cols[i].name, cols[i].datatype, cols[i].maxlength);
+				// cols[i].datatype = CS_CHAR_TYPE;
+				// cols[i].format = CS_FMT_NULLTERM;
 				col_data[i].value = (CS_CHAR *)malloc(cols[i].maxlength);
 				if (col_data[i].value == NULL)
 				{
@@ -580,13 +583,24 @@ static VALUE statement_Execute(VALUE self) {
 					case CS_INT_TYPE:
 					case CS_TINYINT_TYPE:
 					case CS_SMALLINT_TYPE:
+						col.datatype  = CS_CHAR_TYPE;
+						col.format    = CS_FMT_NULLTERM;
+						col.locale    = NULL;
+						cs_convert(conn->context, &cols[i], col_data[i].value, &col, output, &output_len);
 						// tds_convert(conn->context, ctype, col_data[i].value, col_data[i].valuelen, CS_INT_TYPE, &dres);
 						// rb_hash_aset(row, rb_str_new2(tds->res_info->columns[i]->column_name), LONG2NUM(dres.bi));												
 						rb_hash_aset(row, rb_str_new2(cols[i].name), Qnil);
+						rb_hash_aset(row, rb_str_new2(cols[i].name), INT2FIX(atoi(output)));
 						break;
 					
 					case CS_DATETIME_TYPE:
 					case CS_DATETIME4_TYPE:
+						col.maxlength = 30;
+						col.datatype  = CS_CHAR_TYPE;
+						col.format    = CS_FMT_NULLTERM;
+						col.locale    = NULL;
+						
+						cs_convert(conn->context, &cols[i], col_data[i].value, &col, output, &output_len);
 						// if(tds_datecrack(SYBDATETIME, src, &date_rec)==TDS_SUCCEED) {				
 						// 
 						// 	if(date_rec.year && date_rec.month && date_rec.day) {
@@ -606,6 +620,7 @@ static VALUE statement_Execute(VALUE self) {
 						// 	rb_hash_aset(row, rb_str_new2(tds->res_info->columns[i]->column_name), column_value);
 						// } else {
 							rb_hash_aset(row, rb_str_new2(cols[i].name), Qnil);
+							rb_hash_aset(row, rb_str_new2(cols[i].name), rb_funcall(rb_DateTime, rb_intern("parse"), 1, rb_str_new2(output)));
 						// }
 						break;
 					
