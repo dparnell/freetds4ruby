@@ -1,7 +1,6 @@
 #include "ruby.h"
 
-#include "tds.h"
-#include "tdsconvert.h"
+#include "ctpublic.h"
 
 static VALUE rb_FreeTDS;
 static VALUE rb_Driver;
@@ -11,10 +10,8 @@ static VALUE rb_Statement;
 static VALUE rb_DateTime;
 
 typedef struct _tds_connection {
-	TDSSOCKET *tds;
-	TDSLOGIN *login;
-	TDSCONTEXT *context;
-	TDSCONNECTION *connection;
+	CS_CONTEXT *context;
+	CS_CONNECTION *connection;
 } TDS_Connection;
 
 /*** helper functions ***/
@@ -101,7 +98,7 @@ static VALUE alloc_tds_connection(VALUE klass) {
 	
 	return result;
 }
-
+/*
 static int connection_handle_message(TDSCONTEXT * context, TDSSOCKET * tds, TDSMESSAGE * msg)
 {
 	VALUE self = (VALUE)tds_get_parent(tds);
@@ -132,6 +129,7 @@ static int connection_handle_message(TDSCONTEXT * context, TDSSOCKET * tds, TDSM
 	}
 	return 0;
 }
+*/
 
 static VALUE connection_Initialize(VALUE self, VALUE connection_hash) {
 	TDS_Connection* conn;
@@ -145,106 +143,75 @@ static VALUE connection_Initialize(VALUE self, VALUE connection_hash) {
 	int port = 0;
 	VALUE temp;
 	VALUE errors;
+	CS_RETCODE ret;
 	
-	printf("A");
 	Data_Get_Struct(self, TDS_Connection, conn);
-	printf("B");
-	conn->login = tds_alloc_login();
-	printf("C");
-	conn->context = tds_alloc_context();
-	printf("D");
-	if (conn->context->locale && !conn->context->locale->date_fmt) {
-		printf("E");
-		/* set default in case there's no locale file */
-		conn->context->locale->date_fmt = strdup("%b %e %Y %I:%M%p");
-	}
-	printf("F");
+	cs_ctx_alloc(CS_VERSION_100, &conn->context);
+	ct_init(conn->context, CS_VERSION_100);
+	ct_con_alloc(conn->context, &conn->connection);
 	
-	conn->context->msg_handler = connection_handle_message;
-	conn->context->err_handler = connection_handle_message;
-	printf("G");
+//	conn->context->msg_handler = connection_handle_message;
+//	conn->context->err_handler = connection_handle_message;
 	
 	/* now let's get the connection parameters */
 	temp = rb_hash_aref(connection_hash, ID2SYM(rb_intern("hostname")));
-	printf("H");
 	hostname = value_to_cstr(temp);
 
-	printf("I");
 	temp = rb_hash_aref(connection_hash, ID2SYM(rb_intern("port")));
 	if(RTEST(temp)) {
 		port = FIX2INT(temp);
 	} else {
 		port = 1433;
 	}
-	printf("J");
 
 	temp = rb_hash_aref(connection_hash, ID2SYM(rb_intern("username")));
 	username = value_to_cstr(temp);
-	printf("K");
 	
 	temp = rb_hash_aref(connection_hash, ID2SYM(rb_intern("password")));
 	password = value_to_cstr(temp);
-	printf("L");
 
 	temp = rb_hash_aref(connection_hash, ID2SYM(rb_intern("servername")));
 	servername = value_to_cstr(temp);
-	printf("M");
 
 	temp = rb_hash_aref(connection_hash, ID2SYM(rb_intern("charset")));
 	charset = value_to_cstr(temp);
-	printf("N");
 
 	if(charset==NULL) {
 		charset = strdup("ISO-8859-1");
 	}
-	printf("O");
 	
 	/* validate parameters */
 	if (!servername && !hostname) {
 		rb_raise(rb_eArgError, "Either servername or hostname must be specified");
 		return Qnil;
 	}
-	printf("P");
 	
 	if (hostname && !port) {
 		rb_raise(rb_eArgError, "No port specified");
 		return Qnil;
 	}
-	printf("Q");
+
 	if (!username) {
 		rb_raise(rb_eArgError, "No username specified");
 		return Qnil;
 	}
-	printf("R");
+
 	if (!password) {
 		password = strdup("");
 	}	
 	
 //	printf("*** servername='%s', username='%s' password='%s'\n", servername, username, password);
 	
-	if (servername) {
-		tds_set_user(conn->login, username);
-		tds_set_app(conn->login, "TSQL");
-		tds_set_library(conn->login, "TDS-Library");
-		tds_set_server(conn->login, servername);
-		tds_set_client_charset(conn->login, charset);
-		tds_set_language(conn->login, "us_english");
-		tds_set_passwd(conn->login, password);
-		if (confile) {
-			tds_set_interfaces_file_loc(confile);
-		}
-		/* else we specified hostname/port */
-	} else {
-		tds_set_user(conn->login, username);
-		tds_set_app(conn->login, "TSQL");
-		tds_set_library(conn->login, "TDS-Library");
-		tds_set_server(conn->login, hostname);
-		tds_set_port(conn->login, port);
-		tds_set_client_charset(conn->login, charset);
-		tds_set_language(conn->login, "us_english");
-		tds_set_passwd(conn->login, password);
+	ct_con_props(conn->connection, CS_SET, CS_USERNAME, username, CS_NULLTERM, NULL);
+	ct_con_props(conn->connection, CS_SET, CS_PASSWORD, password, CS_NULLTERM, NULL);
+	
+	if (hostname) {
+		ct_con_props(conn->connection, CS_SET, CS_HOSTNAME, hostname, CS_NULLTERM, NULL);
+		ct_con_props(conn->connection, CS_SET, CS_PORT, (char*)&port, CS_NULLTERM, NULL);
 	}	
-	printf("S");
+
+	/* Try to open a connection */
+   	ret = ct_connect(conn->connection, servername, CS_NULLTERM);
 	
 	/* free up all the memory */
 	if (hostname)
@@ -255,44 +222,21 @@ static VALUE connection_Initialize(VALUE self, VALUE connection_hash) {
 		free(password);
 	if (servername)
 		free(servername);
-	if (charset)
-		free(charset);
 
-	printf("T");
-	rb_iv_set(self, "@messages", rb_ary_new());
-	errors = rb_ary_new();
-	rb_iv_set(self, "@errors", errors);
-	printf("U");
-
-	/* Try to open a connection */
-	conn->tds = tds_alloc_socket(conn->context, 512);
-	tds_set_parent(conn->tds, (void*)self);
-	conn->connection = tds_read_config_info(NULL, conn->login, conn->context->locale);
-	if (!conn->connection || tds_connect(conn->tds, conn->connection) == TDS_FAIL) {
-		printf("V");
-		tds_free_connection(conn->connection);
-		
-		VALUE err = rb_funcall(errors, rb_intern("first"), 0);
-		if(RTEST(err)) {
-			char* error_message = value_to_cstr(rb_hash_aref(err, rb_str_new2("message")));
-			rb_raise(rb_eIOError, error_message);
-			
-			return Qnil;
-		}
-		printf("W");
-		
+	if(ret!=CS_SUCCEED) {
 		rb_raise(rb_eIOError, "Connection failed");
 		return Qnil;
 	}
-	printf("X");
-	
-	tds_free_connection(conn->connection);
-	printf("Y");
+
+	rb_iv_set(self, "@messages", rb_ary_new());
+	errors = rb_ary_new();
+	rb_iv_set(self, "@errors", errors);
 	
 	return Qnil;
 }
 
 static VALUE connection_Statement(VALUE self, VALUE query) {
+/*	
 	TDS_Connection* conn;
 	
 	Data_Get_Struct(self, TDS_Connection, conn);
@@ -307,10 +251,12 @@ static VALUE connection_Statement(VALUE self, VALUE query) {
 	} 
 	
 	rb_raise(rb_eEOFError, "The connection is closed");
+*/	
 	return Qnil;
 }
 
 static VALUE connection_Close(VALUE self) {
+/*	
 	TDS_Connection* conn;
 	
 	Data_Get_Struct(self, TDS_Connection, conn);
@@ -322,8 +268,11 @@ static VALUE connection_Close(VALUE self) {
 	conn->tds = NULL;
 	conn->login = NULL;
 	conn->context = NULL;
+*/
+	return Qnil;
 }
 
+/*	
 static char* column_type_name(TDSCOLUMN* column) {
 	char *column_type = NULL;
 
@@ -463,8 +412,10 @@ static char* column_type_name(TDSCOLUMN* column) {
 	
 	return column_type;
 }
+*/
 
 static VALUE statement_Execute(VALUE self) {
+/*	
 	int rc, i;
 	TDSCOLUMN *col;
 	int ctype;
@@ -672,7 +623,7 @@ static VALUE statement_Execute(VALUE self) {
 		char* error_message = value_to_cstr(rb_hash_aref(err, rb_str_new2("message")));
 		rb_raise(rb_eIOError, error_message);
 	}
-	
+*/	
 	return Qnil;	
 }
 
