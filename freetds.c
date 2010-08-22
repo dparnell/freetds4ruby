@@ -267,150 +267,88 @@ static VALUE connection_Close(VALUE self) {
 	
 	Data_Get_Struct(self, TDS_Connection, conn);
 
-	// TODO: find ct-lib equilivents
-	// tds_free_socket(conn->tds);
-	// tds_free_login(conn->login);
-	// tds_free_context(conn->context);	
-	
+	ct_close(conn->connection, CS_FORCE_CLOSE);
+	ct_exit(conn->context, CS_FORCE_EXIT);
+
 	conn->connection = NULL;
 	conn->context = NULL;
 
 	return Qnil;
 }
 
-/*
-static char* column_type_name(TDSCOLUMN* column) {
-	char *column_type = NULL;
-
-	switch (column->column_type) {
-	case SYBINT1:
+static char* column_type_name(CS_DATAFMT column) {
+	char * column_type;
+	
+	switch (column.datatype) {
+	case CS_TINYINT_TYPE:
 		column_type = "tinyint";
 		break;
-	case SYBBIT:
+	case CS_BIT_TYPE:
 		column_type = "bit";
 		break;
-	case SYBINT2:
+	case CS_SMALLINT_TYPE:
 		column_type = "smallint";
 		break;
-	case SYBINT4:
+	case CS_INT_TYPE:
 		column_type = "int";
 		break;
-	case SYBINT8:
-		column_type = "bigint";
-		break;
-	case SYBDATETIME:
+	case CS_DATETIME_TYPE:
 		column_type = "datetime";
 		break;
-	case SYBDATETIME4:
+	case CS_DATETIME4_TYPE:
 		column_type = "smalldatetime";
 		break;
-	case SYBREAL:
+	case CS_REAL_TYPE:
 		column_type = "real";
 		break;
-	case SYBMONEY:
+	case CS_MONEY_TYPE:
 		column_type = "money";
 		break;
-	case SYBMONEY4:
+	case CS_MONEY4_TYPE:
 		column_type = "smallmoney";
 		break;
-	case SYBFLT8:
+	case CS_FLOAT_TYPE:
 		column_type = "float";
 		break;
 
-	case SYBINTN:
-		switch (column->column_size) {
-		case 1:
-			column_type = "tinyint";
-			break;
-		case 2:
-			column_type = "smallint";
-			break;
-		case 4:
-			column_type = "int";
-			break;
-		case 8:
-			column_type = "bigint";
-			break;
-		}
-		break;
-
-	case SYBBITN:
-		column_type = "bit";
-		break;
-	case SYBFLTN:
-		switch (column->column_size) {
-		case 4:
-			column_type = "real";
-			break;
-		case 8:
-			column_type = "float";
-			break;
-		}
-		break;
-	case SYBMONEYN:
-		switch (column->column_size) {
-		case 4:
-			column_type = "smallmoney";
-			break;
-		case 8:
-			column_type = "money";
-			break;
-		}
-		break;
-	case SYBDATETIMN:
-		switch (column->column_size) {
-		case 4:
-			column_type = "smalldatetime";
-			break;
-		case 8:
-			column_type = "datetime";
-			break;
-		}
-		break;
-	case SYBDECIMAL:
+	case CS_DECIMAL_TYPE:
 		column_type = "decimal";
 		break;
-	case SYBNUMERIC:
+	case CS_NUMERIC_TYPE:
 		column_type = "numeric";
 		break;
 
-	case SYBVARCHAR:
+	case CS_VARCHAR_TYPE:
 		column_type = "varchar";
 		break;		
-	case SYBCHAR:
+	case CS_CHAR_TYPE:
 		column_type = "char";
 		break;
 		
-	case XSYBVARBINARY:
+	case CS_VARBINARY_TYPE:
 		column_type = "varbinary";
 		break;
-	case XSYBVARCHAR:
-		column_type = "varchar";
-		break;
-	case XSYBBINARY:
+	case CS_BINARY_TYPE:
 		column_type = "binary";
 		break;
-	case XSYBCHAR:
-		column_type = "char";
-		break;
-	case SYBTEXT:
+	case CS_TEXT_TYPE:
 		column_type = "text";
 		break;
-	case SYBIMAGE:
+	case CS_IMAGE_TYPE:
 		column_type = "image";
 		break;
-	case XSYBNVARCHAR:
+	case CS_UNICHAR_TYPE:
 		column_type = "nvarchar";
 		break;
-	case XSYBNCHAR:
-		column_type = "nchar";
-		break;
-	case SYBNTEXT:
-		column_type = "ntext";
-		break;
-	case SYBUNIQUE:
-		column_type = "uniqueidentifier";
-		break;
+	// case XSYBNCHAR:
+	// 	column_type = "nchar";
+	// 	break;
+	// case SYBNTEXT:
+	// 	column_type = "ntext";
+	// 	break;
+	// case SYBUNIQUE:
+	// 	column_type = "uniqueidentifier";
+	// 	break;
 	default:
 //		printf("here - %d\n", column->column_type);
 		return NULL;
@@ -418,26 +356,18 @@ static char* column_type_name(TDSCOLUMN* column) {
 	
 	return column_type;
 }
-*/
 
 static VALUE statement_Execute(VALUE self) {
 	int i;
 	CS_DATAFMT col;
 	CS_DATAFMT *cols;
 	EX_COLUMN_DATA *col_data;
-	int ctype;
-	// CONV_RESULT dres;
-	unsigned char *src;
 	CS_INT rc;
-	CS_INT srclen;
-	CS_INT rowtype;
 	CS_INT resulttype;
-	CS_INT computeid;
 	CS_INT num_cols;
 	CS_INT col_len;
 	CS_INT row_count = 0;
 	CS_INT rows_read;
-	CS_SMALLINT indicator;
 
 	struct timeval start, stop;
 	int print_rows = 1;
@@ -524,17 +454,17 @@ static VALUE statement_Execute(VALUE self) {
 			
 			// Get column information
 			for (i = 0; i < num_cols; i++) {
-				// TODO: What is this doing?
-				// if (tds_get_null(tds->res_info->current_row, i)) {
-				// 	rb_hash_aset(row, rb_str_new2(tds->res_info->columns[i]->column_name), Qnil);
-				// 	continue;
-				// }
 				rc = ct_describe(cmd, (i+1), &cols[i]);
-				// ctype = tds_get_conversion_type(col->column_type, col->column_size);
-				// col.maxlength = ex_display_dlen(&col) + 1;
-				// fprintf(stderr, "\ncol: %s, datatype: %d, maxlength: %d\n", cols[i].name, cols[i].datatype, cols[i].maxlength);
-				// cols[i].datatype = CS_CHAR_TYPE;
-				// cols[i].format = CS_FMT_NULLTERM;
+
+				column_value = rb_hash_new();
+				rb_hash_aset(column_value, column_name, rb_str_new2(cols[i].name));
+				rb_hash_aset(column_value, column_type, rb_str_new2(column_type_name(cols[i])));
+				rb_hash_aset(column_value, column_size, INT2FIX(cols[i].maxlength));
+				rb_hash_aset(column_value, column_scale, INT2FIX(cols[i].scale));
+				rb_hash_aset(column_value, column_precision, INT2FIX(cols[i].precision));
+
+				rb_ary_push(columns, column_value);
+				
 				col_data[i].value = (CS_CHAR *)malloc(cols[i].maxlength);
 				if (col_data[i].value == NULL)
 				{
@@ -559,6 +489,10 @@ static VALUE statement_Execute(VALUE self) {
 				
 				// Create Ruby objects
 				for (i = 0; i < num_cols; i++) {
+					if (col_data[i].indicator == -1) {
+						rb_hash_aset(row, rb_str_new2(cols[i].name), Qnil);
+						continue;
+					}
 					switch (cols[i].datatype) {
 					case CS_TINYINT_TYPE:
 					case CS_BIT_TYPE:
@@ -590,26 +524,7 @@ static VALUE statement_Execute(VALUE self) {
 						col.locale    = NULL;
 						
 						cs_convert(conn->context, &cols[i], col_data[i].value, &col, output, &output_len);
-						// if(tds_datecrack(SYBDATETIME, src, &date_rec)==TDS_SUCCEED) {				
-						// 
-						// 	if(date_rec.year && date_rec.month && date_rec.day) {
-						// 		date_parts[0] = INT2FIX(date_rec.year);
-						// 		date_parts[1] = INT2FIX(date_rec.month);
-						// 		date_parts[2] = INT2FIX(date_rec.day);
-						// 		date_parts[3] = INT2FIX(date_rec.hour);
-						// 		date_parts[4] = INT2FIX(date_rec.minute);
-						// 		date_parts[5] = INT2FIX(date_rec.second);
-						// 		
-						// 		//printf("**%d/%d/%d %d:%d:%d\n", date_rec.year, date_rec.month, date_rec.day, date_rec.hour, date_rec.minute, date_rec.second);
-						// 		column_value = rb_funcall2(rb_DateTime, rb_intern("civil"), 6, &date_parts[0]);
-						// 	} else {
-						// 		column_value = Qnil;
-						// 	}
-						// 	
-						// 	rb_hash_aset(row, rb_str_new2(tds->res_info->columns[i]->column_name), column_value);
-						// } else {
-							rb_hash_aset(row, rb_str_new2(cols[i].name), rb_funcall(rb_DateTime, rb_intern("parse"), 1, rb_str_new2(output)));
-						// }
+						rb_hash_aset(row, rb_str_new2(cols[i].name), rb_funcall(rb_DateTime, rb_intern("parse"), 1, rb_str_new2(output)));
 						break;
 					
 					case CS_REAL_TYPE:
