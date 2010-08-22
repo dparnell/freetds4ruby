@@ -376,6 +376,8 @@ static VALUE statement_Execute(VALUE self) {
 	CS_DATEREC date_rec;
 	char output[30];
 	CS_INT output_len;
+	int tempInt;
+	double tempDouble;
 	
 	TDS_Connection* conn;
 	CS_COMMAND * cmd;
@@ -496,12 +498,10 @@ static VALUE statement_Execute(VALUE self) {
 					switch (cols[i].datatype) {
 					case CS_TINYINT_TYPE:
 					case CS_BIT_TYPE:
-						col.datatype  = CS_CHAR_TYPE;
-						col.format    = CS_FMT_NULLTERM;
+						col.datatype  = CS_INT_TYPE;
 						col.locale    = NULL;
-						cs_convert(conn->context, &cols[i], col_data[i].value, &col, output, &output_len);
-						// TODO: Could we do this better?
-						if(atoi(output) == 1) {
+						cs_convert(conn->context, &cols[i], col_data[i].value, &col, &tempInt, &output_len);
+						if(tempInt == 1) {
 							rb_hash_aset(row, rb_str_new2(cols[i].name), Qtrue);
 						} else {
 							rb_hash_aset(row, rb_str_new2(cols[i].name), Qfalse);
@@ -509,11 +509,10 @@ static VALUE statement_Execute(VALUE self) {
 						break;
 					case CS_INT_TYPE:
 					case CS_SMALLINT_TYPE:
-						col.datatype  = CS_CHAR_TYPE;
-						col.format    = CS_FMT_NULLTERM;
+						col.datatype  = CS_INT_TYPE;
 						col.locale    = NULL;
-						cs_convert(conn->context, &cols[i], col_data[i].value, &col, output, &output_len);
-						rb_hash_aset(row, rb_str_new2(cols[i].name), INT2FIX(atoi(output)));
+						cs_convert(conn->context, &cols[i], col_data[i].value, &col, &tempInt, &output_len);
+						rb_hash_aset(row, rb_str_new2(cols[i].name), INT2FIX(tempInt));
 						break;
 					
 					case CS_DATETIME_TYPE:
@@ -533,11 +532,11 @@ static VALUE statement_Execute(VALUE self) {
 					case CS_MONEY4_TYPE: 
 					case CS_NUMERIC_TYPE:
 					case CS_DECIMAL_TYPE:
-						col.datatype  = CS_CHAR_TYPE;
-						col.format    = CS_FMT_NULLTERM;
+						col.datatype  = CS_FLOAT_TYPE;
 						col.locale    = NULL;
-						cs_convert(conn->context, &cols[i], col_data[i].value, &col, output, &output_len);
-						rb_hash_aset(row, rb_str_new2(cols[i].name), rb_float_new(atof(output)));
+						// not too sure about this one.  Should it be a double or a float?
+						cs_convert(conn->context, &cols[i], col_data[i].value, &col, &tempDouble, &output_len);
+						rb_hash_aset(row, rb_str_new2(cols[i].name), rb_float_new(tempDouble));
 						break;
 					
 					case CS_CHAR_TYPE:
