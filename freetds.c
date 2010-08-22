@@ -142,13 +142,11 @@ static int connection_handle_message(TDSCONTEXT * context, TDSSOCKET * tds, TDSM
 static VALUE connection_Initialize(VALUE self, VALUE connection_hash) {
 	TDS_Connection* conn;
 	
-	char *hostname = NULL;
 	char *servername = NULL;
 	char *username = NULL;
 	char *password = NULL;
 	char *confile = NULL;
 	char *charset = NULL;
-	int port = 0;
 	VALUE temp;
 	VALUE errors;
 	CS_RETCODE ret;
@@ -162,16 +160,6 @@ static VALUE connection_Initialize(VALUE self, VALUE connection_hash) {
 //	conn->context->err_handler = connection_handle_message;
 	
 	/* now let's get the connection parameters */
-	temp = rb_hash_aref(connection_hash, ID2SYM(rb_intern("hostname")));
-	hostname = value_to_cstr(temp);
-
-	temp = rb_hash_aref(connection_hash, ID2SYM(rb_intern("port")));
-	if(RTEST(temp)) {
-		port = FIX2INT(temp);
-	} else {
-		port = 1433;
-	}
-
 	temp = rb_hash_aref(connection_hash, ID2SYM(rb_intern("username")));
 	username = value_to_cstr(temp);
 	
@@ -189,16 +177,11 @@ static VALUE connection_Initialize(VALUE self, VALUE connection_hash) {
 	}
 	
 	/* validate parameters */
-	if (!servername && !hostname) {
-		rb_raise(rb_eArgError, "Either servername or hostname must be specified");
+	if (!servername) {
+		rb_raise(rb_eArgError, "You must specify a servername");
 		return Qnil;
 	}
 	
-	if (hostname && !port) {
-		rb_raise(rb_eArgError, "No port specified");
-		return Qnil;
-	}
-
 	if (!username) {
 		rb_raise(rb_eArgError, "No username specified");
 		return Qnil;
@@ -212,18 +195,11 @@ static VALUE connection_Initialize(VALUE self, VALUE connection_hash) {
 	
 	ct_con_props(conn->connection, CS_SET, CS_USERNAME, username, CS_NULLTERM, NULL);
 	ct_con_props(conn->connection, CS_SET, CS_PASSWORD, password, CS_NULLTERM, NULL);
-	
-	if (hostname) {
-		ct_con_props(conn->connection, CS_SET, CS_HOSTNAME, hostname, CS_NULLTERM, NULL);
-		ct_con_props(conn->connection, CS_SET, CS_PORT, (char*)&port, CS_NULLTERM, NULL);
-	}	
 
 	/* Try to open a connection */
    	ret = ct_connect(conn->connection, servername, CS_NULLTERM);
 	
 	/* free up all the memory */
-	if (hostname)
-		free(hostname);
 	if (username)
 		free(username);
 	if (password)

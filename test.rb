@@ -73,10 +73,7 @@ class TestFreeTDS < Test::Unit::TestCase
     
     # these don't hit the server
     assert_raise(ArgumentError) { driver.connect({}) }
-    assert_raise(ArgumentError) { driver.connect({:hostname => 'this host should not exist'}) }
-    assert_raise(ArgumentError) { driver.connect({:hostname => 'this host should not exist', :port => 1234}) }
     
-    assert_raise(IOError) { driver.connect({:hostname => 'this host should not exist', :port => 1234, :username => 'xxxx'}) }
     assert_raise(IOError) { driver.connect({:servername => 'beast', :username => 'xxxx'}) }
   end
   
