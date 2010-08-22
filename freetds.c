@@ -467,6 +467,10 @@ static VALUE statement_Execute(VALUE self) {
 
 				rb_ary_push(columns, column_value);
 				
+				// TODO: need a better solution to avoid malloc'ing 2GB text columns
+				if (cols[i].maxlength > 100000) {
+					cols[i].maxlength = 100000;
+				}
 				col_data[i].value = (CS_CHAR *)malloc(cols[i].maxlength);
 				if (col_data[i].value == NULL)
 				{
@@ -588,7 +592,7 @@ static VALUE statement_Execute(VALUE self) {
 			rb_iv_set(self, "@status", Qnil);
 			break;
 		default:
-			fprintf(stderr, "ct_results returned unexpected result type\n");
+			fprintf(stderr, "ct_results returned unexpected result type: %d\n", resulttype);
 			break;
 		}
 	}

@@ -9,3 +9,4 @@
 - more tests, of course
 - better (faster) date parsing
 - better bool testing?
+- cs_get_data needed for large columns, but has restrictions on usage. basically, the large column needs to be unbound, and no column proceeding it can be bound either. see: http://infocenter.sybase.com/help/index.jsp?topic=/com.sybase.help.sdk_12.5.1.ctref/html/ctref/X31502.htm
