@@ -354,7 +354,13 @@ static VALUE statement_Execute(VALUE self) {
 	CS_INT output_len;
 	int tempInt;
 	double tempDouble;
-	
+	char* tempText;
+	char* newTempText;
+	int tempTextLen;
+	CS_INT data_rc;
+	int isNull = 0;
+	CS_DATE tempDate;
+
 	TDS_Connection* conn;
 	CS_COMMAND * cmd;
 	
@@ -442,24 +448,6 @@ static VALUE statement_Execute(VALUE self) {
 				rb_hash_aset(column_value, column_precision, INT2FIX(cols[i].precision));
 
 				rb_ary_push(columns, column_value);
-				
-				// TODO: need a better solution to avoid malloc'ing 2GB text columns
-				if (cols[i].maxlength > 100000) {
-					cols[i].maxlength = 100000;
-				}
-				col_data[i].value = (CS_CHAR *)malloc(cols[i].maxlength);
-				if (col_data[i].value == NULL)
-				{
-					fprintf(stderr, "col_data malloc() failed");
-					return CS_MEM_ERROR;
-				}
-				
-				rc = ct_bind(cmd, (i + 1), &cols[i], col_data[i].value, &col_data[i].valuelen, &col_data[i].indicator);
-				if (rc != CS_SUCCEED)
-				{
-					fprintf(stderr, "ct_bind() failed");
-					break;
-				}
 			}
 			
 			// Fetch data
@@ -478,9 +466,7 @@ static VALUE statement_Execute(VALUE self) {
 					switch (cols[i].datatype) {
 					case CS_TINYINT_TYPE:
 					case CS_BIT_TYPE:
-						col.datatype  = CS_INT_TYPE;
-						col.locale    = NULL;
-						cs_convert(conn->context, &cols[i], col_data[i].value, &col, &tempInt, &output_len);
+						ct_get_data(cmd, (i + 1), &tempInt, sizeof(tempInt), &output_len);
 						if(tempInt == 1) {
 							rb_hash_aset(row, rb_str_new2(cols[i].name), Qtrue);
 						} else {
@@ -489,9 +475,7 @@ static VALUE statement_Execute(VALUE self) {
 						break;
 					case CS_INT_TYPE:
 					case CS_SMALLINT_TYPE:
-						col.datatype  = CS_INT_TYPE;
-						col.locale    = NULL;
-						cs_convert(conn->context, &cols[i], col_data[i].value, &col, &tempInt, &output_len);
+						ct_get_data(cmd, (i + 1), &tempInt, sizeof(tempInt), &output_len);
 						rb_hash_aset(row, rb_str_new2(cols[i].name), INT2FIX(tempInt));
 						break;
 					
@@ -501,8 +485,8 @@ static VALUE statement_Execute(VALUE self) {
 						col.datatype  = CS_CHAR_TYPE;
 						col.format    = CS_FMT_NULLTERM;
 						col.locale    = NULL;
-						
-						cs_convert(conn->context, &cols[i], col_data[i].value, &col, output, &output_len);
+						ct_get_data(cmd, (i + 1), &tempDate, sizeof(tempDate), &output_len);
+						cs_convert(conn->context, &cols[i], &tempDate, &col, output, &output_len);
 						rb_hash_aset(row, rb_str_new2(cols[i].name), rb_funcall(rb_DateTime, rb_intern("parse"), 1, rb_str_new2(output)));
 						break;
 					
@@ -512,10 +496,7 @@ static VALUE statement_Execute(VALUE self) {
 					case CS_MONEY4_TYPE: 
 					case CS_NUMERIC_TYPE:
 					case CS_DECIMAL_TYPE:
-						col.datatype  = CS_FLOAT_TYPE;
-						col.locale    = NULL;
-						// not too sure about this one.  Should it be a double or a float?
-						cs_convert(conn->context, &cols[i], col_data[i].value, &col, &tempDouble, &output_len);
+						ct_get_data(cmd, (i + 1), &tempDouble, sizeof(tempDouble), &output_len);
 						rb_hash_aset(row, rb_str_new2(cols[i].name), rb_float_new(tempDouble));
 						break;
 					
@@ -525,14 +506,37 @@ static VALUE statement_Execute(VALUE self) {
 					case CS_VARCHAR_TYPE:
 					case CS_UNICHAR_TYPE:
 					case CS_UNIQUE_TYPE: // @todo should this one be handled differently?
+						isNull = 0;
+						tempTextLen = 1; // 1 for \0
+						do {
+							newTempText = realloc((tempTextLen == 1 ? NULL : tempText), tempTextLen + (50 * sizeof(char))); // allocate another 50 chars
+							if (newTempText != NULL) {
+								tempText = newTempText;
+							} else {
+								fprintf(stderr, "realloc error");
+							}
+							
+							data_rc = ct_get_data(cmd, (i + 1), tempText + tempTextLen - 1, 50, &output_len);
+
+							if (tempTextLen == 1 && output_len == 0 && (data_rc == CS_END_DATA || data_rc == CS_END_ITEM)) {
+								isNull = 1;
+							}
+								
+							tempTextLen = tempTextLen + output_len;
+						} while (data_rc == CS_SUCCEED);
+						if (data_rc != CS_END_DATA && data_rc != CS_END_ITEM)
+						{
+							fprintf(stderr, "ct_get_data failed, data_rc = %d\n", data_rc);
+							return data_rc;
+						}
+						tempText[tempTextLen-1] = '\0';
+						if (isNull == 1) {
+							rb_hash_aset(row, rb_str_new2(cols[i].name), Qnil);
+						} else {
+							rb_hash_aset(row, rb_str_new2(cols[i].name), rb_str_new2(tempText));
+						}
 						
-						// if (tds_convert(conn->context, ctype, (TDS_CHAR *) src, srclen, SYBVARCHAR, &dres) < 0)
-						// 	continue;
-						// 	
-						rb_hash_aset(row, rb_str_new2(cols[i].name), rb_str_new2(col_data[i].value));
-						// 
-						// free(dres.c);
-					
+						free(tempText);
 						break;
 					
 					case CS_BINARY_TYPE:
