@@ -6,7 +6,7 @@ class TestFreeTDS < Test::Unit::TestCase
 
   def setup
     @config = {
-      :hostname => 'sbs2003.local',
+      :servername => 'local', # name of server in your freetds.conf
       :username => 'sa',
       :password => 'h3althsolv3'
     }
